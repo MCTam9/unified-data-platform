@@ -105,16 +105,21 @@ def current_user(request: Request) -> User:
 def run_view_query(user: User, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     """Execute read-only as the user's role, site scope set inside the
     transaction so it cannot leak between pooled requests."""
+    # row_factory goes on the CURSOR, never on the pooled connection: setting
+    # it on the connection persists after the connection returns to the pool
+    # and silently changes row shape for the next borrower. Same class of bug
+    # as leaking app.site_scope across pooled requests — which is why the
+    # scope below is set with is_local=true inside the transaction.
     with POOLS[user.role].connection() as conn:
-        conn.row_factory = dict_row
         with conn.transaction():
             conn.execute("set local transaction read only")
             conn.execute("set local statement_timeout = '10s'")
             if user.site_scope:
                 conn.execute("select set_config('app.site_scope', %s, true)",
                              (",".join(user.site_scope),))
-            cur = conn.execute(sql, params)
-            return cur.fetchmany(2000)
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                return cur.fetchmany(2000)
 
 
 @app.get("/health")
@@ -159,6 +164,70 @@ def read_view(view_name: str, user: User = Depends(current_user), limit: int = 5
             raise HTTPException(403, f"{user.role} has no access to {view_name}")
         raise HTTPException(500, str(exc))
     return {"view": view_name, "role": user.role, "rows": rows}
+
+
+# ------------------------------------------------------- demo transparency
+# Read-only panels that show the enforcement rather than asserting it: the
+# live grant matrix, the audit trail, and the agent's query log. They read
+# via the admin pool because they inspect the system itself; in a real
+# deployment they would sit behind an admin role, not a department one.
+
+@app.get("/api/system/grants")
+def system_grants(user: User = Depends(current_user)):
+    """The role x view grant matrix, asked of Postgres at request time."""
+    with POOLS["admin"].connection() as conn:
+        views = [r[0] for r in conn.execute(
+            "select viewname from pg_views where schemaname = 'reporting' "
+            "order by viewname").fetchall()]
+        roles = list(ROLE_BY_DEPT.values())
+        matrix = []
+        for view in views:
+            granted = {}
+            for role in roles:
+                cur = conn.execute("select has_table_privilege(%s, %s, 'select')",
+                                   (role, f"reporting.{view}"))
+                granted[role] = bool(cur.fetchone()[0])
+            matrix.append({"view": view, **granted})
+        # Prove core is dark for every department role, too.
+        core_tables = [r[0] for r in conn.execute(
+            "select tablename from pg_tables where schemaname = 'core' "
+            "order by tablename").fetchall()]
+        core_readable = 0
+        for table in core_tables:
+            for role in roles:
+                cur = conn.execute("select has_table_privilege(%s, %s, 'select')",
+                                   (role, f"core.{table}"))
+                core_readable += 1 if cur.fetchone()[0] else 0
+    return {"roles": roles, "matrix": matrix,
+            "core_tables": len(core_tables), "core_readable_by_roles": core_readable}
+
+
+@app.get("/api/system/audit")
+def system_audit(limit: int = 15, user: User = Depends(current_user)):
+    """Tail of the append-only audit log — who changed what, when."""
+    with POOLS["admin"].connection() as conn, \
+            conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute("""
+            select table_name, action, changed_by,
+                   to_char(changed_at, 'HH24:MI:SS') as changed_at,
+                   coalesce(new_values->>'invoice_no', new_values->>'amount_gbp',
+                            new_values->>'status', '') as detail
+            from core.audit_log order by changed_at desc, audit_id desc limit %s
+        """, (max(1, min(limit, 50)),)).fetchall()
+    return {"rows": rows}
+
+
+@app.get("/api/system/agent-log")
+def system_agent_log(limit: int = 10, user: User = Depends(current_user)):
+    """Every question the model was ever asked, with the SQL it chose."""
+    with POOLS["admin"].connection() as conn, \
+            conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute("""
+            select to_char(asked_at, 'HH24:MI:SS') as asked_at, role_name,
+                   question, outcome, row_count, duration_ms
+            from core.agent_query_log order by asked_at desc limit %s
+        """, (max(1, min(limit, 50)),)).fetchall()
+    return {"rows": rows}
 
 
 class AskRequest(BaseModel):

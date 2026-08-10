@@ -28,6 +28,9 @@ Postgres roles and grants, not by application code.**
   log, nominal codes and VAT codes on every money line, billed-vs-earned
   recognition dates, GiST exclusion constraints that make double-letting a
   unit *impossible* rather than discouraged.
+- **A "How it works" tab that shows the enforcement rather than claiming it** —
+  the role x view grant matrix queried live from `has_table_privilege`, the
+  audit trail filling up as writes happen, and the agent's own query log.
 - **An AI query agent that cannot leak.** Natural language → SQL over the
   reporting views, executed on a connection opened as the asking user's own
   Postgres role. The grants are the security boundary, not the prompt. Every

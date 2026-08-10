@@ -41,6 +41,15 @@ export const fetchViews = (token: string) =>
   req("/api/views", token) as Promise<{ role: string; views: string[] }>;
 export const fetchView = (token: string, view: string, limit = 500) =>
   req(`/api/view/${view}?limit=${limit}`, token) as Promise<{ rows: Row[] }>;
+export const fetchGrants = (token: string) =>
+  req("/api/system/grants", token) as Promise<{
+    roles: string[]; matrix: Row[]; core_tables: number; core_readable_by_roles: number;
+  }>;
+export const fetchAudit = (token: string) =>
+  req("/api/system/audit?limit=12", token) as Promise<{ rows: Row[] }>;
+export const fetchAgentLog = (token: string) =>
+  req("/api/system/agent-log?limit=8", token) as Promise<{ rows: Row[] }>;
+
 export const askAgent = (token: string, question: string) =>
   req("/api/agent/ask", token, {
     method: "POST",
@@ -64,6 +73,13 @@ export function groupSum(rows: Row[], key: string, sums: string[]): Point[] {
     acc.set(k, entry);
   }
   return [...acc.values()].sort((a, b) => String(a[key]).localeCompare(String(b[key])));
+}
+
+/** Drop the newest period from a time series. The current month is always
+ *  partial — invoices raised but not yet collected — and plotting it makes a
+ *  cliff that reads as a data error rather than as "the month isn't over". */
+export function excludePartialPeriod(points: Point[]): Point[] {
+  return points.length > 1 ? points.slice(0, -1) : points;
 }
 
 export const monthLabel = (iso: unknown) => {

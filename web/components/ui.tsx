@@ -130,21 +130,26 @@ export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
           {visible.length !== rows.length ? `${visible.length} of ${rows.length} rows` : `${rows.length} rows`}
         </span>
         <button onClick={downloadCsv}
-          className="ml-auto rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:border-neutral-500">
+          className="ml-auto rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 transition-colors hover:border-neutral-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400">
           Download CSV
         </button>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+      {/* Fixed viewport: long tables scroll inside their own box with a
+          sticky header, so switching screens never resizes the page. */}
+      <div className="max-h-[54vh] overflow-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-neutral-50 dark:bg-neutral-900">
               {cols.map((c) => (
                 <th key={c}
                   onClick={() => clickHeader(c)}
-                  className={`cursor-pointer select-none px-3 py-2 font-medium text-neutral-500 dark:text-neutral-400 whitespace-nowrap hover:text-neutral-800 dark:hover:text-neutral-200 ${
+                  title={`Sort by ${c.replaceAll("_", " ")}`}
+                  className={`cursor-pointer select-none border-b border-neutral-200 bg-neutral-50 px-3 py-2 font-medium text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400 whitespace-nowrap hover:text-neutral-800 dark:hover:text-neutral-200 ${
                     numericCols.has(c) ? "text-right" : "text-left"}`}>
                   {c.replaceAll("_", " ")}
-                  {sortCol === c && <span className="ml-1">{sortDir === 1 ? "↑" : "↓"}</span>}
+                  <span className="ml-1 inline-block w-2 text-neutral-400">
+                    {sortCol === c ? (sortDir === 1 ? "↑" : "↓") : ""}
+                  </span>
                 </th>
               ))}
             </tr>
@@ -152,9 +157,11 @@ export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
           <tbody>
             {shown.map((r, i) => (
               <tr key={i} className="border-b border-neutral-100 dark:border-neutral-900 last:border-0 hover:bg-neutral-50 dark:hover:bg-neutral-900/60">
-                {cols.map((c) => (
+                {cols.map((c, ci) => (
                   <td key={c}
-                    className={`px-3 py-1.5 whitespace-nowrap text-neutral-800 dark:text-neutral-200 ${
+                    className={`px-3 py-1.5 whitespace-nowrap ${
+                      ci === 0 ? "font-medium text-neutral-900 dark:text-neutral-100"
+                               : "text-neutral-700 dark:text-neutral-300"} ${
                       numericCols.has(c) ? "text-right" : "text-left"}`}>
                     <Cell col={c} value={r[c]} />
                   </td>
@@ -163,12 +170,12 @@ export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
             ))}
           </tbody>
         </table>
-        {visible.length > maxRows && (
-          <p className="px-3 py-2 text-xs text-neutral-500">
-            Showing {maxRows} of {visible.length} rows — filter to narrow, or download the CSV for everything
-          </p>
-        )}
       </div>
+      {visible.length > maxRows && (
+        <p className="text-xs text-neutral-500">
+          Showing the first {maxRows} of {visible.length} rows — filter to narrow, or download the CSV for everything.
+        </p>
+      )}
     </div>
   );
 }

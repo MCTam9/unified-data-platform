@@ -1,5 +1,5 @@
 "use client";
-import { Row, fetchView, gbp, groupSum, monthLabel } from "@/lib/api";
+import { Row, excludePartialPeriod, fetchView, gbp, groupSum, monthLabel } from "@/lib/api";
 import { usePolled } from "@/lib/usePolled";
 import { BarRank, ChartCard, StatusDonut, TrendLine } from "./charts";
 import { StatTile } from "./ui";
@@ -22,18 +22,18 @@ function Loading() {
 
 // ------------------------------------------------------------------- FINANCE
 export function FinanceOverview({ token }: { token: string }) {
-  const { data, error } = usePolled(
+  const { data, error } = usePolled(`fin-overview:${token}`,
     () => Promise.all([
       fetchView(token, "vw_finance_site_pnl", 2000),
       fetchView(token, "vw_finance_leakage_summary"),
-    ]),
-    [token], POLL_MS);
+    ]), POLL_MS);
 
   if (error) return <p className="text-sm text-red-700 dark:text-red-400">{error}</p>;
   if (!data) return <Loading />;
   const [pnl, leakage] = data.map((d) => d.rows);
 
-  const byMonth = groupSum(pnl, "period", ["revenue_invoiced_gbp", "revenue_collected_gbp"])
+  const byMonth = excludePartialPeriod(
+    groupSum(pnl, "period", ["revenue_invoiced_gbp", "revenue_collected_gbp"]))
     .map((p) => ({ ...p, month: monthLabel(p.period) }));
 
   const latestPeriod = String(pnl.reduce(
@@ -50,14 +50,14 @@ export function FinanceOverview({ token }: { token: string }) {
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <ChartCard title="Revenue by month" note="invoiced vs collected — never conflated">
+      <ChartCard title="Revenue by month" note="complete months only. Cash sits above net revenue because it carries VAT — collected on HMRC's behalf, not income.">
         <TrendLine data={byMonth} x="month" unit="£"
           series={[
-            { key: "revenue_invoiced_gbp", label: "Invoiced" },
-            { key: "revenue_collected_gbp", label: "Collected" },
+            { key: "revenue_invoiced_gbp", label: "Invoiced (net)" },
+            { key: "revenue_collected_gbp", label: "Collected (cash, incl. VAT)" },
           ]} />
       </ChartCard>
-      <ChartCard title="Annualised leakage by exception class" note="the money the system finds">
+      <ChartCard title="Annualised leakage by exception class" note="monthly gap × 12 — recurs until the billing process changes">
         <BarRank data={leakageBars} x="class" y="annualised_gap_gbp" unit="£" />
       </ChartCard>
       <ChartCard title={`Top sites by contribution — ${monthLabel(latestPeriod)}`}
@@ -72,14 +72,13 @@ export function FinanceOverview({ token }: { token: string }) {
 const STATUS_ORDER = ["ok", "due_90d", "due_30d", "EXPIRED"];
 
 export function OpsOverview({ token }: { token: string }) {
-  const { data, error } = usePolled(
+  const { data, error } = usePolled(`ops-overview:${token}`,
     () => Promise.all([
       fetchView(token, "vw_ops_compliance_expiry", 2000),
       fetchView(token, "vw_ops_site_occupancy"),
       fetchView(token, "vw_ops_utility_intensity", 2000),
       fetchView(token, "vw_ops_maintenance_load", 2000),
-    ]),
-    [token], POLL_MS);
+    ]), POLL_MS);
 
   if (error) return <p className="text-sm text-red-700 dark:text-red-400">{error}</p>;
   if (!data) return <Loading />;
@@ -91,7 +90,7 @@ export function OpsOverview({ token }: { token: string }) {
   const occBars = occupancy
     .map((r) => ({ site_code: String(r.site_code), occupancy_pct: Number(r.occupancy_pct) }))
     .sort((a, b) => a.occupancy_pct - b.occupancy_pct);
-  const utilByMonth = groupSum(utilities, "period", ["cost_gbp"])
+  const utilByMonth = excludePartialPeriod(groupSum(utilities, "period", ["cost_gbp"]))
     .map((p) => ({ ...p, month: monthLabel(p.period) }));
 
   const unitsTotal = occupancy.reduce((a, r) => a + Number(r.units_total), 0);
@@ -115,7 +114,7 @@ export function OpsOverview({ token }: { token: string }) {
           <StatusDonut data={certMix} nameKey="status" valueKey="count"
             centerLabel="certificates" />
         </ChartCard>
-        <ChartCard title="Utility cost by month" note="all utilities, all sites">
+        <ChartCard title="Utility cost by month" note="all utilities, all sites — complete months only">
           <TrendLine data={utilByMonth} x="month" unit="£"
             series={[{ key: "cost_gbp", label: "Utility cost" }]} />
         </ChartCard>
@@ -129,13 +128,12 @@ export function OpsOverview({ token }: { token: string }) {
 
 // --------------------------------------------------------------------- SALES
 export function SalesOverview({ token }: { token: string }) {
-  const { data, error } = usePolled(
+  const { data, error } = usePolled(`sales-overview:${token}`,
     () => Promise.all([
       fetchView(token, "vw_sales_pipeline", 2000),
       fetchView(token, "vw_sales_conversion", 2000),
       fetchView(token, "vw_sales_churn_risk", 2000),
-    ]),
-    [token], POLL_MS);
+    ]), POLL_MS);
 
   if (error) return <p className="text-sm text-red-700 dark:text-red-400">{error}</p>;
   if (!data) return <Loading />;
@@ -148,7 +146,8 @@ export function SalesOverview({ token }: { token: string }) {
       .reduce((a, r) => a + Number(r.pipeline_value_monthly_gbp ?? 0), 0),
   }));
 
-  const cohorts = groupSum(conversion, "cohort_month", ["enquiries", "won", "lost"])
+  const cohorts = excludePartialPeriod(
+    groupSum(conversion, "cohort_month", ["enquiries", "won", "lost"]))
     .map((p) => ({
       ...p, month: monthLabel(p.cohort_month),
       win_rate_pct: Number(p.won) + Number(p.lost) > 0
