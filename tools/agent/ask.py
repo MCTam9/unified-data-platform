@@ -24,10 +24,13 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 from decimal import Decimal
 from datetime import date, datetime
 
 from psycopg_pool import ConnectionPool
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.agent.catalogue import build_view_catalogue
 

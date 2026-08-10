@@ -64,9 +64,21 @@ function toCsv(rows: Row[]): string {
   return [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n");
 }
 
-export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
-  rows: Row[]; maxRows?: number; exportName?: string;
+export type RowAction = {
+  /** Only rows matching this predicate get a button. */
+  applies: (row: Row) => boolean;
+  label: string;
+  busyLabel: string;
+  doneLabel: string;
+  run: (row: Row) => Promise<string>;   // resolves to a confirmation message
+};
+
+export function DataTable({ rows, maxRows = 40, exportName = "export", action }: {
+  rows: Row[]; maxRows?: number; exportName?: string; action?: RowAction;
 }) {
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<string>("");
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
   const [filter, setFilter] = useState("");
@@ -106,6 +118,25 @@ export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
     else { setSortCol(c); setSortDir(1); }
   }
 
+  const rowKey = (r: Row) => JSON.stringify(Object.values(r).slice(0, 3));
+
+  async function runAction(row: Row) {
+    if (!action) return;
+    const key = rowKey(row);
+    setBusyKey(key);
+    try {
+      const message = await action.run(row);
+      setDoneKeys((d) => new Set(d).add(key));
+      setToast(message);
+      setTimeout(() => setToast(""), 6000);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "action failed");
+      setTimeout(() => setToast(""), 6000);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   function downloadCsv() {
     const blob = new Blob([toCsv(visible)], { type: "text/csv" });
     const a = document.createElement("a");
@@ -117,6 +148,11 @@ export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
 
   return (
     <div className="space-y-2">
+      {toast && (
+        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+          {toast}
+        </p>
+      )}
       <div className="flex items-center gap-2">
         {rows.length > 10 && (
           <input
@@ -152,6 +188,11 @@ export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
                   </span>
                 </th>
               ))}
+              {action && (
+                <th className="sticky right-0 border-b border-l border-neutral-200 bg-neutral-50 px-3 py-2 text-right font-medium text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+                  action
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -166,6 +207,24 @@ export function DataTable({ rows, maxRows = 40, exportName = "export" }: {
                     <Cell col={c} value={r[c]} />
                   </td>
                 ))}
+                {action && (
+                  <td className="sticky right-0 border-l border-neutral-100 bg-white px-3 py-1.5 text-right dark:border-neutral-900 dark:bg-neutral-950">
+                    {action.applies(r) ? (
+                      doneKeys.has(rowKey(r)) ? (
+                        <span className="whitespace-nowrap text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                          {action.doneLabel}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => runAction(r)}
+                          disabled={busyKey === rowKey(r)}
+                          className="whitespace-nowrap rounded-lg border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 transition-colors hover:border-neutral-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300">
+                          {busyKey === rowKey(r) ? action.busyLabel : action.label}
+                        </button>
+                      )
+                    ) : null}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

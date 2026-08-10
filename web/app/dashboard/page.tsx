@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PERSONAS, fetchView, fetchViews, gbp } from "@/lib/api";
+import { CatalogueEntry, PERSONAS, billLicence, fetchCatalogue, fetchView, gbp } from "@/lib/api";
 import { usePolled } from "@/lib/usePolled";
 import { DataTable, Section, StatTile, TableSkeleton } from "@/components/ui";
 import { FinanceOverview, OpsOverview, SalesOverview } from "@/components/Overview";
@@ -10,58 +10,16 @@ import { AgentPanel } from "@/components/AgentPanel";
 
 const POLL_MS = 15000;
 
-// Which views make up each department's screens, in display order. The list
-// the user actually gets comes from /api/views (i.e. from Postgres grants) —
-// this map only orders and titles what the database allows. Tabs whose view
-// is a client-side composition need no grant of their own.
+// Screen titles, descriptions, department and order all come from
+// core.catalogue via /api/catalogue — the same definition the BI tool and the
+// AI agent read, so the three cannot describe the same number differently.
+// The only thing hardcoded here is which screen a department opens on.
 type Screen = { view: string; title: string; note?: string };
-const OVERVIEW: Screen = { view: "overview", title: "Overview" };
 
-const SCREENS: Record<string, Screen[]> = {
-  FINANCE: [
-    // Revenue assurance stays the landing tab — it is the demo's first screen.
-    { view: "vw_finance_revenue_assurance", title: "Revenue assurance",
-      note: "Occupied but unbilled, underbilled, expired-but-active — earned and not invoiced" },
-    OVERVIEW,
-    { view: "vw_finance_site_pnl", title: "Site P&L",
-      note: "Contribution margin: central overhead is excluded, never silently allocated" },
-    { view: "vw_finance_budget_variance", title: "Budget variance",
-      note: "Actual against budget, per site and measure" },
-    { view: "vw_finance_aged_debt", title: "Aged debt",
-      note: "Outstanding gross (net + VAT) less payments received" },
-    { view: "vw_finance_lease_exposure", title: "Head-lease exposure",
-      note: "Passing rent, expiries, break dates and rent-review dates" },
-    { view: "vw_finance_operated_brand_pnl", title: "Operated food P&L",
-      note: "Own-operated food: platform commission and COGS, kept apart from licence revenue" },
-    { view: "vw_scorecard", title: "Scorecard",
-      note: "Target vs actual with a named owner and a review date" },
-    { view: "vw_data_exceptions", title: "Data quality" },
-  ],
-  OPS: [
-    OVERVIEW,
-    { view: "vw_ops_compliance_expiry", title: "Compliance",
-      note: "Certificate expiry across the estate — an expired cert is a closed kitchen" },
-    { view: "vw_ops_site_occupancy", title: "Occupancy",
-      note: "Current unit status per site" },
-    { view: "vw_ops_maintenance_load", title: "Maintenance",
-      note: "Ticket load, resolution time and spend by site and category" },
-    { view: "vw_ops_utility_intensity", title: "Utilities",
-      note: "Consumption and cost per site, and cost per occupied unit" },
-    { view: "vw_ops_asset_replacement", title: "Assets",
-      note: "Capex, derived depreciation and replacements due within 12 months" },
-    { view: "vw_scorecard", title: "Scorecard" },
-    { view: "vw_data_exceptions", title: "Data quality" },
-  ],
-  SALES: [
-    OVERVIEW,
-    { view: "vw_sales_pipeline", title: "Pipeline",
-      note: "Open enquiries by stage, source and region" },
-    { view: "vw_sales_conversion", title: "Conversion",
-      note: "Monthly cohorts: win rate and days to win" },
-    { view: "vw_sales_churn_risk", title: "Churn risk",
-      note: "One row per active licence. Overdue counts only — amounts are Finance's" },
-    { view: "vw_scorecard", title: "Scorecard" },
-  ],
+const LANDING: Record<string, string> = {
+  FINANCE: "vw_finance_revenue_assurance",   // open on the screen that finds money
+  OPS: "overview",
+  SALES: "overview",
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -81,16 +39,23 @@ export default function Dashboard() {
     setToken(t);
   }, [router]);
 
-  // What Postgres says this role can read (polled, so a grant change shows up).
-  const grants = usePolled(`views:${token}`,
-    () => (token ? fetchViews(token) : Promise.resolve(null)), 60000);
-  const granted = grants.data?.views ?? [];
+  // What this role may read, and what each view is called — from the database.
+  const grants = usePolled(`catalogue:${token}`,
+    () => (token ? fetchCatalogue(token) : Promise.resolve(null)), 60000);
+  const catalogue: CatalogueEntry[] = grants.data?.views ?? [];
 
   const screens = useMemo(() => {
-    if (!persona) return [];
-    return SCREENS[persona.dept].filter(
-      (s) => s.view === "overview" || granted.includes(s.view));
-  }, [persona, granted]);
+    if (!persona || !catalogue.length) return [];
+    const fromDb: Screen[] = catalogue.map((c) => ({
+      view: c.view_name, title: c.display_name, note: c.description ?? undefined,
+    }));
+    const overview: Screen = { view: "overview", title: "Overview" };
+    const landing = LANDING[persona.dept];
+    // Landing screen first, then Overview, then everything else in DB order.
+    const rest = fromDb.filter((s) => s.view !== landing);
+    const head = fromDb.filter((s) => s.view === landing);
+    return landing === "overview" ? [overview, ...rest] : [...head, overview, ...rest];
+  }, [persona, catalogue]);
 
   useEffect(() => {
     const fixed = ["agent", "system"];
@@ -234,7 +199,21 @@ export default function Dashboard() {
             {table.data === null && !table.error ? (
               <TableSkeleton />
             ) : (
-              <DataTable rows={table.data ?? []} exportName={screen.view} />
+              <DataTable rows={table.data ?? []} exportName={screen.view}
+                action={active === "vw_finance_revenue_assurance" ? {
+                  applies: (r) => r.exception_type === "licence_not_invoiced",
+                  label: "Bill this now",
+                  busyLabel: "Billing…",
+                  doneLabel: "Invoiced ✓",
+                  run: async (r) => {
+                    const res = await billLicence(token!, String(r.site_code),
+                                                  String(r.unit_code));
+                    table.reload();
+                    summary.reload();
+                    return `Invoice ${res.invoice_no} raised for ${res.partner} — ` +
+                           `${gbp(res.net_gbp)} a month no longer leaking.`;
+                  },
+                } : undefined} />
             )}
           </Section>
         ) : (

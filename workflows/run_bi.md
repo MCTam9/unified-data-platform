@@ -81,3 +81,25 @@ Database, and adds four starter questions plus a Finance dashboard.
    `select * from reporting.vw_ops_site_occupancy limit 1` on the Finance
    connection — `permission denied`, even as admin. Then the honesty note
    above about sandboxing.
+
+## How the custom app and the BI tool differ
+
+They are not competitors, and saying which does what is the recommendation:
+
+| | Custom app | Metabase |
+|---|---|---|
+| Ad-hoc questions by non-technical users | ✗ fixed screens | **✓ the whole point** |
+| Users saving their own questions and dashboards | ✗ | **✓** |
+| Scheduled email subscriptions, drill-through, pivots | ✗ | **✓** |
+| A narrative order (revenue assurance first) | **✓** | ✗ |
+| Honest framing baked in (net vs cash, partial periods) | **✓** | ✗ per question |
+| **Taking an action** — "Bill this now" | **✓ only here** | ✗ structurally |
+| The AI query agent | **✓** | ✗ |
+| Showing the boundary itself ("How it works") | **✓** | ✗ |
+
+The last four are the app's reason to exist. Everything above them is work a
+BI tool does better than a bespoke front end ever will, which is why the
+recommendation is to buy that half rather than build it.
+
+Both read the same reporting views **and now the same catalogue**, so a screen
+title, a column label and the agent's glossary cannot drift apart.

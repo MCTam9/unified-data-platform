@@ -223,6 +223,74 @@ def sync_and_report(mb: Metabase, db_ids: dict[str, int]) -> dict[str, list[str]
     return found
 
 
+def read_catalogue(dsn: str) -> dict[str, dict]:
+    """The same definition the app and the agent read — core.catalogue."""
+    catalogue: dict[str, dict] = {}
+    with psycopg.connect(dsn) as conn:
+        for (view, display, description, column, col_display, col_desc,
+             semantic) in conn.execute("""
+                select view_name, display_name, description, column_name,
+                       column_display_name, column_description, column_semantic
+                from core.catalogue order by view_name, column_position
+             """).fetchall():
+            entry = catalogue.setdefault(
+                view, {"display_name": display, "description": description,
+                       "columns": {}})
+            entry["columns"][column] = {
+                "display_name": col_display, "description": col_desc,
+                "semantic": semantic}
+    return catalogue
+
+
+def push_metadata(mb: Metabase, db_ids: dict[str, int], dsn: str) -> None:
+    """Give the BI tool the business's own words.
+
+    Without this Metabase title-cases the raw identifier: `vw_finance_aged_debt`
+    renders as "Vw Finance Aged Debt" and `outstanding_gbp` as "Outstanding
+    Gbp", with no currency formatting — because `vw_` is a database naming
+    convention that means nothing to a finance director. The labels come from
+    core.catalogue, so the BI tool, the app and the agent all say the same
+    thing, and none of it is clicked into a tool where it escapes version
+    control.
+    """
+    catalogue = read_catalogue(dsn)
+    tables = fields = 0
+    for db_id in db_ids.values():
+        meta = mb.get(f"/api/database/{db_id}/metadata")
+        for table in meta.get("tables", []):
+            entry = catalogue.get(table["name"])
+            if not entry:
+                continue
+            mb.put(f"/api/table/{table['id']}", {
+                "display_name": entry["display_name"],
+                "description": entry["description"],
+            })
+            tables += 1
+            for field in table.get("fields", []):
+                col = entry["columns"].get(field["name"])
+                if not col:
+                    continue
+                payload = {"display_name": col["display_name"],
+                           "description": col["description"]}
+                if col["semantic"] == "currency_gbp":
+                    payload["semantic_type"] = "type/Currency"
+                    payload["settings"] = {"currency": "GBP",
+                                           "currency_style": "symbol"}
+                mb.put(f"/api/field/{field['id']}", payload)
+                fields += 1
+    print(f"  applied catalogue    {tables} tables, {fields} columns renamed "
+          f"and described from core.catalogue")
+
+
+def archive_examples(mb: Metabase) -> None:
+    """Metabase ships an "Examples" collection; drop it so the instance opens
+    on this business's data and nothing else."""
+    for coll in _as_list(mb.get("/api/collection")):
+        if coll.get("name") == "Examples" and not coll.get("archived"):
+            mb.put(f"/api/collection/{coll['id']}", {"archived": True})
+            print("  archived the bundled Examples collection")
+
+
 def upsert_groups(mb: Metabase) -> dict[str, int]:
     existing = {g["name"]: g["id"] for g in _as_list(mb.get("/api/permissions/group"))}
     ids = {}
@@ -375,6 +443,8 @@ def main() -> int:
             drop_sample_database(mb)
         db_ids = upsert_databases(mb, args.db_host, args.db_port, args.db_name)
         found = sync_and_report(mb, db_ids)
+        push_metadata(mb, db_ids, args.dsn)
+        archive_examples(mb)
     except (RuntimeError, httpx.HTTPError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -41,6 +41,21 @@ export const fetchViews = (token: string) =>
   req("/api/views", token) as Promise<{ role: string; views: string[] }>;
 export const fetchView = (token: string, view: string, limit = 500) =>
   req(`/api/view/${view}?limit=${limit}`, token) as Promise<{ rows: Row[] }>;
+export type CatalogueEntry = {
+  view_name: string; display_name: string; department: string;
+  sort_order: number; description: string | null;
+};
+/** Screen titles and descriptions come from the database, not from this file —
+ *  the same core.catalogue the BI tool and the AI agent read. */
+export const fetchCatalogue = (token: string) =>
+  req("/api/catalogue", token) as Promise<{ views: CatalogueEntry[] }>;
+
+export const billLicence = (token: string, site_code: string, unit_code: string) =>
+  req("/api/action/bill-licence", token, {
+    method: "POST",
+    body: JSON.stringify({ site_code, unit_code }),
+  }) as Promise<{ billed: boolean; invoice_no: string; net_gbp: number; partner: string }>;
+
 export const fetchGrants = (token: string) =>
   req("/api/system/grants", token) as Promise<{
     roles: string[]; matrix: Row[]; core_tables: number; core_readable_by_roles: number;

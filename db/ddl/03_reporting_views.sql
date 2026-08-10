@@ -234,6 +234,10 @@ join core.site          s  on s.site_id    = u.site_id
 join core.brand_partner bp on bp.partner_id = l.partner_id
 where l.status = 'active'
   and l.start_date <= date_trunc('month', current_date)
+  -- A licence past its end date belongs to the 'expired still active' class
+  -- below: it needs closing, not invoicing. Excluding it here stops the same
+  -- licence being counted twice and overstating the leakage figure.
+  and (l.end_date is null or l.end_date >= current_date)
   and not exists (
       select 1 from core.invoice i
       where i.licence_id = l.licence_id

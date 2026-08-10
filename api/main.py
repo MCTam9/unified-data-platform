@@ -166,6 +166,82 @@ def read_view(view_name: str, user: User = Depends(current_user), limit: int = 5
     return {"view": view_name, "role": user.role, "rows": rows}
 
 
+@app.get("/api/catalogue")
+def catalogue(user: User = Depends(current_user)):
+    """What each view the caller can read is called and means — the same
+    definition the BI tool and the AI agent read. Screen titles are not
+    hardcoded in the front end; they come from the database."""
+    with POOLS["admin"].connection() as conn, \
+            conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute("""
+            select distinct on (view_name)
+                   view_name, display_name, department, sort_order, description
+            from core.catalogue
+            where has_table_privilege(%s, 'reporting.' || view_name, 'select')
+            order by view_name, column_position
+        """, (user.role,)).fetchall()
+    rows.sort(key=lambda r: r["sort_order"])
+    return {"role": user.role, "views": rows}
+
+
+# ------------------------------------------------------------- write actions
+# Department roles hold SELECT only, deliberately — so a write cannot ride in
+# on a reporting connection. Actions authorise against the caller's own role
+# first (can they even see this exception?), then write through the admin pool
+# with app.user_email set so the audit triggers attribute it to the person.
+# The period-lock trigger still refuses anything outside the open period.
+
+class BillLicenceRequest(BaseModel):
+    site_code: str
+    unit_code: str
+
+
+@app.post("/api/action/bill-licence")
+def bill_licence_action(body: BillLicenceRequest,
+                        user: User = Depends(current_user)):
+    """Raise the missing invoice behind a 'licence not invoiced' exception —
+    the thing a BI tool structurally cannot do."""
+    from tools.db.billing import bill_licence, find_unbilled_licence
+
+    # 1. Authorise through the caller's OWN role: if their grants don't let
+    #    them see the exception, they cannot act on it.
+    try:
+        visible = run_view_query(user, """
+            select site_code, unit_code from reporting.vw_finance_revenue_assurance
+            where exception_type = 'licence_not_invoiced'
+              and site_code = %s and unit_code = %s
+        """, (body.site_code, body.unit_code))
+    except Exception as exc:
+        if "permission denied" in str(exc):
+            raise HTTPException(403, f"{user.role} cannot act on revenue assurance")
+        raise HTTPException(500, str(exc))
+    if not visible:
+        raise HTTPException(404, "no unbilled licence for that unit")
+
+    # 2. Write as the platform, attributed to the person.
+    with POOLS["admin"].connection() as conn:
+        try:
+            with conn.transaction():
+                conn.execute("select set_config('app.user_email', %s, true)",
+                             (user.email,))
+                with conn.cursor() as cur:
+                    licence_id = find_unbilled_licence(cur, body.site_code,
+                                                       body.unit_code)
+                    if not licence_id:
+                        raise HTTPException(404, "already billed for this period")
+                    invoice = bill_licence(cur, licence_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            if "period containing" in str(exc):     # period-lock trigger
+                raise HTTPException(409, str(exc).splitlines()[0])
+            raise HTTPException(500, str(exc))
+
+    if not invoice:
+        raise HTTPException(404, "already billed for this period")
+    return {"billed": True, **invoice}
+
+
 # ------------------------------------------------------- demo transparency
 # Read-only panels that show the enforcement rather than asserting it: the
 # live grant matrix, the audit trail, and the agent's query log. They read

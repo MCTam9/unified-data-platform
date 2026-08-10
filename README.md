@@ -28,6 +28,20 @@ Postgres roles and grants, not by application code.**
   log, nominal codes and VAT codes on every money line, billed-vs-earned
   recognition dates, GiST exclusion constraints that make double-letting a
   unit *impossible* rather than discouraged.
+- **One definition, three consumers.** What each view and column *means* lives
+  in the database — `comment on` for the prose, `core.view_catalogue` for
+  display names and ordering, exposed as `core.catalogue`. The app's screen
+  titles, the BI tool's labels and the AI agent's glossary all read it, so the
+  same number cannot be described three different ways. Without it Metabase
+  title-cases the raw identifier: `vw_finance_aged_debt` renders as "Vw Finance
+  Aged Debt". With it, "Aged debt", described, with £-formatted columns.
+- **An action, not just a report.** "Bill this now" on a revenue-assurance
+  exception raises the missing invoice: the row clears and the leakage headline
+  drops. Department roles hold `SELECT` only, so the action authorises against
+  the caller's own role first, then writes through the admin pool with
+  `app.user_email` set — the audit log names the person, and the period-lock
+  trigger still refuses anything outside the open period. This is the half a
+  BI tool structurally cannot do.
 - **A "How it works" tab that shows the enforcement rather than claiming it** —
   the role x view grant matrix queried live from `has_table_privilege`, the
   audit trail filling up as writes happen, and the agent's own query log.
@@ -50,7 +64,7 @@ python -m venv .venv
 .venv/bin/python tools/db/seed.py          # deterministic synthetic data
 .venv/bin/python tools/quality/reconcile.py  # the numbers tie, to the penny
 .venv/bin/python tools/db/verify_grants.py   # the grant matrix, printed
-.venv/bin/python -m pytest tests/          # 44 tests incl. the permission proof
+.venv/bin/python -m pytest tests/          # 58 tests incl. the permission proof
 
 .venv/bin/python -m uvicorn api.main:app --port 8000   # API
 cd web && npm install && npm run dev                    # UI on :3000
@@ -113,10 +127,11 @@ connection pools, so the step-3 grants constrain the model too.
 ```
 db/ddl/          idempotent SQL: schema, views, roles/grants/RLS, triggers
 tools/           deterministic CLIs (flag + exit-code contract)
-  db/            migrate, seed, verify_grants
+  db/            migrate, seed, verify_grants, simulate, billing
+  bi/            setup_metabase — one connection per department role
   quality/       reconcile — site P&L + central overhead ties to the ledger
   agent/         ask (the query agent), catalogue, eval, eval_compare
-workflows/       SOPs: month_end_close, onboard_partner, run_billing
+workflows/       SOPs: month_end_close, onboard_partner, run_billing, run_demo, run_bi
 api/             FastAPI — per-role pools, bearer-token stub
 web/             Next.js — dashboards + department switch + agent panel
 evals/           the agent eval suite (permission/injection cases first)

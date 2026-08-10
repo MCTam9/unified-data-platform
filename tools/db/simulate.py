@@ -30,10 +30,15 @@ import random
 import signal
 import sys
 import time
+from pathlib import Path
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import psycopg
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.db.billing import bill_licence, find_unbilled_licence
 
 DEFAULT_DSN = os.environ.get(
     "DATABASE_URL",
@@ -154,36 +159,16 @@ def ev_enquiry(cur) -> str | None:
 
 def ev_billing_catchup(cur) -> str | None:
     """Invoice one unbilled active licence for the current period — the
-    leakage headline drops in front of the audience."""
-    cur.execute("""
-        select l.licence_id, l.partner_id, l.monthly_fee_gbp
-        from core.licence_agreement l
-        where l.status = 'active'
-          and l.start_date <= date_trunc('month', current_date)
-          and (l.end_date is null or l.end_date >= current_date)
-          and not exists (select 1 from core.invoice i
-                          where i.licence_id = l.licence_id
-                            and i.period_start = date_trunc('month', current_date)::date)
-        order by random() limit 1
-    """)
-    row = cur.fetchone()
-    if not row:
+    leakage headline drops in front of the audience. Shares its implementation
+    with the app's "Bill this now" action so the two cannot drift."""
+    licence_id = find_unbilled_licence(cur)
+    if not licence_id:
         return None
-    licence_id, partner_id, fee = row
-    vat = (fee * Decimal("0.20")).quantize(Decimal("0.01"))
-    cur.execute("""
-        insert into core.invoice (invoice_no, licence_id, partner_id, period_start,
-            period_end, issued_on, due_on, net_gbp, vat_gbp, vat_code,
-            recognition_start, recognition_end, status)
-        values ('INV-CATCHUP-' || substr(gen_random_uuid()::text, 1, 8), %s, %s,
-            date_trunc('month', current_date)::date,
-            (date_trunc('month', current_date) + interval '1 month - 1 day')::date,
-            current_date, current_date + 14, %s, %s, 'S',
-            date_trunc('month', current_date)::date,
-            (date_trunc('month', current_date) + interval '1 month - 1 day')::date,
-            'issued')
-    """, (licence_id, partner_id, fee, vat))
-    return f"BILLING CATCH-UP: £{fee}/mo licence invoiced — leakage drops"
+    invoice = bill_licence(cur, licence_id)
+    if not invoice:
+        return None
+    return (f"BILLING CATCH-UP: {invoice['partner']} at {invoice['site_code']} "
+            f"{invoice['unit_code']} invoiced £{invoice['net_gbp']:,.0f} — leakage drops")
 
 
 EVENTS = [ev_payment, ev_food_order, ev_ticket, ev_enquiry]
