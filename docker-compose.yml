@@ -16,5 +16,41 @@ services:
       timeout: 3s
       retries: 20
 
+  # Self-hosted BI, behind a profile so the core demo stays lightweight:
+  #   docker compose --profile bi up -d metabase
+  #
+  # Metabase connects once per DEPARTMENT ROLE (see tools/bi/setup_metabase.py),
+  # never as the admin. Its schema sync therefore only discovers the views that
+  # role is granted — the BI tool's own data model becomes the grant matrix,
+  # and a misconfigured Metabase permission still cannot get past Postgres.
+  metabase:
+    image: metabase/metabase:v0.63.5.2   # pinned: never ship `latest` in a demo
+    container_name: unified-data-platform-bi
+    profiles: ["bi"]
+    environment:
+      # Application database in Postgres, not the bundled H2 — H2 is explicitly
+      # not for production use. Created by the setup tool before first boot.
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: db
+      MB_DB_PORT: 5432
+      MB_DB_DBNAME: metabase_app
+      MB_DB_USER: platform_admin
+      MB_DB_PASS: platform_admin_dev
+      MB_SITE_NAME: Unified Data Platform BI
+      MB_ANON_TRACKING_ENABLED: "false"
+      JAVA_TOOL_OPTIONS: "-Xmx2g"
+    ports:
+      - "3002:3000"          # 3000/3001 belong to the Next.js app
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "-I", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+    restart: unless-stopped  # recovers itself once metabase_app exists
+
 volumes:
   pgdata:

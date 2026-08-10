@@ -80,6 +80,20 @@ export function SystemPanel({ token }: { token: string }) {
           <li>• Closed periods reject writes by trigger; corrections book as dated adjustments.</li>
           <li>• Mirrored tables carry <code>source_system</code> / <code>external_id</code> / <code>synced_at</code> — ledger and CRM stay the source of truth.</li>
         </ul>
+        <p className="mt-3 rounded-lg bg-neutral-50 dark:bg-neutral-900 px-3 py-2 text-xs text-neutral-600 dark:text-neutral-400">
+          <span className="font-medium text-neutral-800 dark:text-neutral-200">
+            This app for workflows; a BI tool for exploration.
+          </span>{" "}
+          Metabase is self-hosted alongside it and connects <em>once per
+          department role</em>, so its schema sync only discovers the views that
+          role is granted — the BI tool&apos;s data model is the same grant
+          matrix shown below. Start it with{" "}
+          <code>docker compose --profile bi up -d metabase</code> and it runs at{" "}
+          <a href="http://localhost:3002" target="_blank" rel="noreferrer"
+            className="underline underline-offset-2 hover:text-neutral-900 dark:hover:text-neutral-100">
+            localhost:3002
+          </a>.
+        </p>
       </ChartCard>
 
       <ChartCard title="Live grant matrix"

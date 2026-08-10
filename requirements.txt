@@ -6,3 +6,4 @@ pyyaml
 anthropic
 fastapi
 uvicorn[standard]
+httpx

@@ -74,6 +74,25 @@ makes the leakage headline drop) into the **open** accounting period only;
 the period-lock trigger rejects anything historical. Every write lands in the
 audit log attributed to `simulator@demo.local`.
 
+### Self-service BI (optional — Metabase)
+
+```bash
+docker compose --profile bi up -d metabase   # port 3002
+.venv/bin/python tools/bi/setup_metabase.py  # idempotent
+```
+
+The recommendation this encodes: **build the custom app for workflows,
+self-host a BI tool for exploration** — a one-person data function should not
+maintain a bespoke charting framework.
+
+Metabase connects **once per department role**, never as an admin, so its
+schema sync only discovers the views that role is granted — 9 for Finance, 7
+for Ops, 4 for Sales. The BI tool's data model is the grant matrix, and
+`tests/test_metabase.py` proves it, including the backstop: even the Metabase
+admin gets `permission denied` running an ops query through the Finance
+connection. See [workflows/run_bi.md](workflows/run_bi.md), which also covers
+what Metabase's open-source edition can and cannot enforce.
+
 ### The AI agent (optional — needs a key)
 
 ```bash
