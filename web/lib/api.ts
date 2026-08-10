@@ -51,6 +51,27 @@ export const askAgent = (token: string, question: string) =>
     outcome: string;
   }>;
 
+// ---------------------------------------------------------------- charts/agg
+export type Point = Record<string, string | number | null>;
+
+/** Group rows by `key`, summing each of `sums`; sorted by key. */
+export function groupSum(rows: Row[], key: string, sums: string[]): Point[] {
+  const acc = new Map<string, Point>();
+  for (const r of rows) {
+    const k = String(r[key] ?? "");
+    const entry = acc.get(k) ?? { [key]: k, ...Object.fromEntries(sums.map((s) => [s, 0])) };
+    for (const s of sums) entry[s] = Number(entry[s]) + Number(r[s] ?? 0);
+    acc.set(k, entry);
+  }
+  return [...acc.values()].sort((a, b) => String(a[key]).localeCompare(String(b[key])));
+}
+
+export const monthLabel = (iso: unknown) => {
+  const d = new Date(String(iso));
+  return isNaN(d.getTime()) ? String(iso) :
+    d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+};
+
 export const gbp = (v: unknown) =>
   typeof v === "number"
     ? v.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 })

@@ -54,7 +54,22 @@ cd web && npm install && npm run dev                    # UI on :3000
 ```
 
 Open http://localhost:3000, pick a persona, and switch departments in the
-header — the same app changes shape because the database says so.
+header — the same app changes shape because the database says so. Each
+department gets an **Overview** of charts (trend lines, rankings, a compliance
+status donut) computed client-side from the same granted views, polled every
+15 s. Tables sort on click, filter, and export to CSV.
+
+### Make it visibly live
+
+```bash
+.venv/bin/python tools/db/simulate.py --interval 5
+```
+
+A clearly-labelled demo simulator writes plausible events (payments arriving,
+food orders, tickets, enquiries — and the occasional billing catch-up that
+makes the leakage headline drop) into the **open** accounting period only;
+the period-lock trigger rejects anything historical. Every write lands in the
+audit log attributed to `simulator@demo.local`.
 
 ### The AI agent (optional — needs a key)
 
