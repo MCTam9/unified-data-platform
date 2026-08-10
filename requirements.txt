@@ -1,0 +1,8 @@
+psycopg[binary]
+psycopg_pool
+faker
+pytest
+pyyaml
+anthropic
+fastapi
+uvicorn[standard]

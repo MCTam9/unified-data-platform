@@ -1,0 +1,20 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16  # postgres:16 + pgvector, for core.document_chunk
+    container_name: unified-data-platform-db
+    environment:
+      POSTGRES_USER: platform_admin
+      POSTGRES_PASSWORD: platform_admin_dev
+      POSTGRES_DB: platform
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform_admin -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
