@@ -71,7 +71,7 @@ export default function Dashboard() {
   }, [router]);
 
   useEffect(() => {
-    if (screens.length && !screens.some((s) => s.view === active)) {
+    if (screens.length && active !== "agent" && !screens.some((s) => s.view === active)) {
       setActive(screens[0].view);
     }
   }, [screens, active]);
