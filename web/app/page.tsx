@@ -2,40 +2,68 @@
 import { useRouter } from "next/navigation";
 import { PERSONAS } from "@/lib/api";
 
-// The login stub. Not real auth — the point of the demo is what happens AFTER
-// login: the same app changes shape per department, and the boundary is
-// enforced by Postgres grants, not by this page.
+const ROLE_BY_DEPT: Record<string, string> = {
+  FINANCE: "dept_finance",
+  OPS: "dept_ops",
+  SALES: "dept_sales",
+};
+
 export default function Home() {
   const router = useRouter();
+
   return (
-    <main className="mx-auto max-w-2xl px-6 py-16 space-y-8">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-          Unified Data Platform
-        </h1>
-        <p className="text-sm text-neutral-500">
-          One database. Each department sees only its own views — enforced by
-          Postgres roles and grants, not by application code. Pick a persona to
-          see the app take that department&apos;s shape.
-        </p>
-        <p className="inline-block rounded-full bg-amber-100 dark:bg-amber-950 px-3 py-1 text-xs font-medium text-amber-900 dark:text-amber-200">
-          Illustrative demo — all data synthetic
-        </p>
-      </div>
-      <div className="grid gap-3">
-        {PERSONAS.map((p) => (
-          <button
-            key={p.token}
-            onClick={() => {
-              localStorage.setItem("demo_token", p.token);
-              router.push("/dashboard");
-            }}
-            className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-neutral-400 dark:hover:border-neutral-600 transition-colors"
-          >
-            <p className="font-medium text-neutral-900 dark:text-neutral-100">{p.label}</p>
-            <p className="text-sm text-neutral-500">{p.description}</p>
-          </button>
-        ))}
+    <main className="flex flex-1 items-center justify-center px-6 py-12">
+      <div className="w-full max-w-3xl space-y-6">
+        <section className="plinth rounded-2xl p-7 sm:p-9 ring-1 ring-white/[0.08]">
+          <div className="flex items-center gap-2.5 text-xs text-[var(--ink-muted)]">
+            <span className="inline-flex size-6 items-center justify-center rounded-md bg-[#eef2f6] text-xs font-bold text-[#0f172a]">
+              E
+            </span>
+            <span>Encore · Illustrative demo (synthetic data)</span>
+          </div>
+          <h1 className="type-display mt-4 text-3xl sm:text-4xl">
+            Unified Data Platform
+          </h1>
+          <p className="mt-3 max-w-prose text-sm leading-relaxed text-[var(--ink-muted)]">
+            One Postgres database across Finance, Operations, and Partnerships.
+            Each persona connects through its own database role — grants and
+            row-level security shape the app, the BI layer, and the AI agent.
+          </p>
+        </section>
+
+        <section
+          aria-label="Choose a persona"
+          className="grid gap-3.5 sm:grid-cols-2"
+        >
+          {PERSONAS.map((p) => (
+            <button
+              key={p.token}
+              type="button"
+              onClick={() => {
+                localStorage.setItem("demo_token", p.token);
+                router.push("/dashboard");
+              }}
+              className="group flex flex-col justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 text-left transition-colors duration-150 hover:border-[var(--ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ink)]"
+            >
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="type-heading text-base text-[var(--ink)]">
+                    {p.label}
+                  </span>
+                  <code className="rounded-md bg-[var(--subtle)] px-2 py-0.5 font-mono text-[11px] text-[var(--ink-muted)]">
+                    {ROLE_BY_DEPT[p.dept]}
+                  </code>
+                </div>
+                <p className="text-sm leading-relaxed text-[var(--ink-muted)]">
+                  {p.description}
+                </p>
+              </div>
+              <span className="mt-4 text-xs font-semibold text-[var(--ink)] opacity-70 transition-opacity group-hover:opacity-100">
+                Open briefing
+              </span>
+            </button>
+          ))}
+        </section>
       </div>
     </main>
   );

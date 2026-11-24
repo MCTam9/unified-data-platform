@@ -1,225 +1,368 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CatalogueEntry, PERSONAS, billLicence, fetchCatalogue, fetchView, gbp } from "@/lib/api";
+import {
+  CatalogueEntry,
+  PERSONAS,
+  billLicence,
+  fetchCatalogue,
+  fetchView,
+  gbp,
+} from "@/lib/api";
 import { usePolled } from "@/lib/usePolled";
-import { DataTable, Section, StatTile, TableSkeleton } from "@/components/ui";
-import { FinanceOverview, OpsOverview, SalesOverview } from "@/components/Overview";
+import { DataTable, Sheet, TableSkeleton } from "@/components/ui";
+import {
+  FinanceOverview,
+  OpsOverview,
+  SalesOverview,
+} from "@/components/Overview";
 import { SystemPanel } from "@/components/System";
-import { AgentPanel } from "@/components/AgentPanel";
+import { AgentDock } from "@/components/AgentPanel";
 
 const POLL_MS = 15000;
 
-// Screen titles, descriptions, department and order all come from
-// core.catalogue via /api/catalogue — the same definition the BI tool and the
-// AI agent read, so the three cannot describe the same number differently.
-// The only thing hardcoded here is which screen a department opens on.
-type Screen = { view: string; title: string; note?: string };
-
-const LANDING: Record<string, string> = {
-  FINANCE: "vw_finance_revenue_assurance",   // open on the screen that finds money
-  OPS: "overview",
-  SALES: "overview",
-};
+type Tab = "briefing" | "registers" | "system";
 
 const ROLE_LABEL: Record<string, string> = {
-  FINANCE: "dept_finance", OPS: "dept_ops", SALES: "dept_sales",
+  FINANCE: "dept_finance",
+  OPS: "dept_ops",
+  SALES: "dept_sales",
+};
+
+const SHORT_PERSONA: Record<string, string> = {
+  "demo-finance": "Finance",
+  "demo-ops": "Operations",
+  "demo-ops-london": "London Ops",
+  "demo-sales": "Partnerships",
 };
 
 export default function Dashboard() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
-  const [active, setActive] = useState<string>("");
+  const [tab, setTab] = useState<Tab>("briefing");
+  const [selectedView, setSelectedView] = useState<string>("");
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [toast, setToast] = useState<{ text: string; isError?: boolean } | null>(null);
 
   const persona = PERSONAS.find((p) => p.token === token);
 
   useEffect(() => {
     const t = localStorage.getItem("demo_token");
-    if (!t) { router.replace("/"); return; }
+    if (!t) {
+      router.replace("/");
+      return;
+    }
     setToken(t);
   }, [router]);
 
-  // What this role may read, and what each view is called — from the database.
-  const grants = usePolled(`catalogue:${token}`,
-    () => (token ? fetchCatalogue(token) : Promise.resolve(null)), 60000);
+  const notify = useCallback((text: string, isError = false) => {
+    setToast({ text, isError });
+    setTimeout(() => setToast(null), 6000);
+  }, []);
+
+  // Granted views and display names come straight from Postgres core.catalogue.
+  const grants = usePolled(
+    `catalogue:${token}`,
+    () => (token ? fetchCatalogue(token) : Promise.resolve(null)),
+    60000,
+  );
   const catalogue: CatalogueEntry[] = grants.data?.views ?? [];
 
-  const screens = useMemo(() => {
-    if (!persona || !catalogue.length) return [];
-    const fromDb: Screen[] = catalogue.map((c) => ({
-      view: c.view_name, title: c.display_name, note: c.description ?? undefined,
-    }));
-    const overview: Screen = { view: "overview", title: "Overview" };
-    const landing = LANDING[persona.dept];
-    // Landing screen first, then Overview, then everything else in DB order.
-    const rest = fromDb.filter((s) => s.view !== landing);
-    const head = fromDb.filter((s) => s.view === landing);
-    return landing === "overview" ? [overview, ...rest] : [...head, overview, ...rest];
-  }, [persona, catalogue]);
+  // Resolve active register view synchronously so switching personas never flashes.
+  const activeView = useMemo(() => {
+    if (catalogue.some((c) => c.view_name === selectedView)) return selectedView;
+    return catalogue[0]?.view_name ?? "";
+  }, [catalogue, selectedView]);
 
-  useEffect(() => {
-    const fixed = ["agent", "system"];
-    if (screens.length && !fixed.includes(active)
-        && !screens.some((s) => s.view === active)) {
-      setActive(screens[0].view);
-    }
-  }, [screens, active]);
+  const activeEntry = catalogue.find((c) => c.view_name === activeView);
 
-  // Finance headline tiles — only fetched when the role is granted the view.
-  const summary = usePolled(`leakage:${token}`,
-    () => (token && persona?.dept === "FINANCE"
-      ? fetchView(token, "vw_finance_leakage_summary").then((r) => r.rows)
-      : Promise.resolve([])), POLL_MS);
-
-  // The active table's rows.
-  const isTable = !!active && !["agent", "system", "overview"].includes(active);
-  const table = usePolled(`view:${token}:${active}`,
-    () => (token && isTable
-      ? fetchView(token, active).then((r) => r.rows)
-      : Promise.resolve(null)), POLL_MS);
+  const table = usePolled(
+    `view:${token}:${activeView}`,
+    () =>
+      token && tab === "registers" && activeView
+        ? fetchView(token, activeView).then((r) => r.rows)
+        : Promise.resolve(null),
+    POLL_MS,
+  );
 
   if (!token || !persona) return null;
-  const screen = screens.find((s) => s.view === active);
-  const summaryRows = summary.data ?? [];
-  const annualisedGap = summaryRows.reduce(
-    (a, r) => a + Number(r.annualised_gap_gbp ?? 0), 0);
-  const cases = summaryRows.reduce((a, r) => a + Number(r.cases ?? 0), 0);
-  const lastUpdated = table.lastUpdated ?? summary.lastUpdated ?? grants.lastUpdated;
-  const refreshing = table.isRefreshing || summary.isRefreshing;
+
+  const lastUpdated = table.lastUpdated ?? grants.lastUpdated;
+  const refreshing = table.isRefreshing || grants.isRefreshing;
 
   function switchPersona(t: string) {
+    if (t === token) return;
     localStorage.setItem("demo_token", t);
     setToken(t);
-    setActive("");
+    setSelectedView("");
   }
 
-  // Every tab carries a border at all times — activation changes colour only,
-  // never layout, so the bar cannot shift as you click along it.
-  const tabClass = (selected: boolean) =>
-    "shrink-0 rounded-lg border px-3 py-1.5 text-sm transition-colors " +
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 " +
-    (selected
-      ? "border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 font-medium text-neutral-900 dark:text-neutral-50"
-      : "border-transparent text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900 hover:text-neutral-800 dark:hover:text-neutral-300");
+  function openRegister(viewName: string) {
+    setSelectedView(viewName);
+    setTab("registers");
+  }
+
+  // Constant font-weight & border-width: zero layout shift on click.
+  const navBtn = (active: boolean) =>
+    "h-8 rounded-lg px-3 text-sm font-medium transition-colors duration-150 " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ink)] " +
+    (active
+      ? "bg-[var(--card)] text-[var(--ink)] shadow-xs"
+      : "text-[var(--ink-muted)] hover:text-[var(--ink)]");
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-8">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">
-              Unified Data Platform
-            </h1>
-            <span className="rounded-full bg-amber-100 dark:bg-amber-950 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:text-amber-200">
-              synthetic data
+    <div className="flex min-h-screen flex-col">
+      {/* Sticky h-14 top navigation bar — calm, stationary, zero wrapping */}
+      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--background)]/90 backdrop-blur supports-[backdrop-filter]:bg-[var(--background)]/75">
+        <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-4 px-4 sm:px-6">
+          <Link
+            href="/"
+            className="flex shrink-0 items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ink)] rounded-md"
+          >
+            <span className="inline-flex size-7 items-center justify-center rounded-lg bg-[var(--ink)] text-xs font-bold text-[var(--card)]">
+              E
             </span>
+            <span className="type-heading hidden text-sm sm:inline">
+              Unified Data Platform
+            </span>
+          </Link>
+
+          {/* 3 primary destinations — never wraps */}
+          <nav
+            aria-label="Primary navigation"
+            className="flex items-center gap-0.5 rounded-xl bg-[var(--subtle)] p-1"
+          >
+            <button
+              type="button"
+              onClick={() => setTab("briefing")}
+              aria-current={tab === "briefing" ? "page" : undefined}
+              className={navBtn(tab === "briefing")}
+            >
+              Briefing
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("registers")}
+              aria-current={tab === "registers" ? "page" : undefined}
+              className={navBtn(tab === "registers")}
+            >
+              Registers
+              {catalogue.length > 0 && (
+                <span className="ml-1.5 text-xs type-data text-[var(--ink-muted)]">
+                  {catalogue.length}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("system")}
+              aria-current={tab === "system" ? "page" : undefined}
+              className={navBtn(tab === "system")}
+            >
+              How it works
+            </button>
+          </nav>
+
+          {/* Right cluster: 1-click persona switcher + live indicator */}
+          <div className="ml-auto flex items-center gap-3">
+            <div
+              role="group"
+              aria-label="Switch persona"
+              className="hidden items-center gap-0.5 rounded-xl bg-[var(--subtle)] p-1 lg:inline-flex"
+            >
+              {PERSONAS.map((p) => {
+                const selected = p.token === token;
+                return (
+                  <button
+                    key={p.token}
+                    type="button"
+                    onClick={() => switchPersona(p.token)}
+                    title={p.description}
+                    aria-pressed={selected}
+                    className={
+                      "h-7 whitespace-nowrap rounded-lg px-2.5 text-xs font-medium transition-colors duration-150 " +
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ink)] " +
+                      (selected
+                        ? "bg-[var(--card)] text-[var(--ink)] shadow-xs"
+                        : "text-[var(--ink-muted)] hover:text-[var(--ink)]")
+                    }
+                  >
+                    {SHORT_PERSONA[p.token] ?? p.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Compact select on smaller screens */}
+            <select
+              aria-label="Switch persona"
+              value={token}
+              onChange={(e) => switchPersona(e.target.value)}
+              className="h-8 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 text-xs font-medium text-[var(--ink)] lg:hidden"
+            >
+              {PERSONAS.map((p) => (
+                <option key={p.token} value={p.token}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+
+            <div className="hidden min-w-[116px] items-center justify-end gap-1.5 text-xs type-data text-[var(--ink-muted)] xl:flex">
+              <span
+                className={`inline-block size-1.5 rounded-full transition-colors ${
+                  refreshing
+                    ? "bg-[var(--good)]"
+                    : lastUpdated
+                      ? "bg-[var(--good)]/55"
+                      : "bg-[var(--border-strong)]"
+                }`}
+              />
+              <span>
+                {lastUpdated
+                  ? `Live · ${lastUpdated.toLocaleTimeString("en-GB")}`
+                  : "Connecting…"}
+              </span>
+            </div>
           </div>
-          <p className="mt-1 text-sm text-neutral-500">
-            {persona.label}
-            {" · connected as "}
-            <code className="text-xs text-neutral-600 dark:text-neutral-400">
-              {ROLE_LABEL[persona.dept]}
-            </code>
-            {persona.token === "demo-ops-london" && (
-              <span className="text-neutral-400"> · scoped to London sites</span>
-            )}
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex flex-wrap justify-end gap-1.5">
-            {PERSONAS.map((p) => (
-              <button key={p.token} onClick={() => switchPersona(p.token)}
-                className={
-                  "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors " +
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 " +
-                  (p.token === token
-                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                    : "border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:border-neutral-500")
-                }>
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {lastUpdated && (
-            <p className="flex items-center gap-1.5 text-[11px] text-neutral-400">
-              <span className={`inline-block h-1.5 w-1.5 rounded-full transition-colors ${
-                refreshing ? "bg-emerald-500" : "bg-neutral-300 dark:bg-neutral-700"}`} />
-              live · updated {lastUpdated.toLocaleTimeString("en-GB")}
-            </p>
-          )}
         </div>
       </header>
 
-      {persona.dept === "FINANCE" && summaryRows.length > 0 && (
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatTile label="Annualised leakage" value={gbp(annualisedGap)} tone="bad"
-            sub="computed from the data, not asserted" />
-          <StatTile label="Open exceptions" value={String(cases)} tone="bad"
-            sub={`across ${summaryRows.length} classes`} />
-          <StatTile label="Biggest class"
-            value={String(summaryRows[0]?.exception_type ?? "—").replaceAll("_", " ")}
-            sub={`${gbp(Number(summaryRows[0]?.annualised_gap_gbp ?? 0))} a year`} />
-          <StatTile label="Sites reporting" value="25" sub="one source of truth" />
+      {/* Main canvas on the mineral plaster plane */}
+      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pt-5 pb-24 sm:px-6">
+        {grants.error && (
+          <p className="mb-4 rounded-2xl bg-[var(--blocked-soft)] px-4 py-3 text-sm text-[var(--blocked-ink)]">
+            {grants.error}
+          </p>
+        )}
+
+        {tab === "briefing" ? (
+          persona.dept === "FINANCE" ? (
+            <FinanceOverview
+              token={token}
+              onOpenRegister={openRegister}
+              onNotify={notify}
+            />
+          ) : persona.dept === "OPS" ? (
+            <OpsOverview token={token} onOpenRegister={openRegister} />
+          ) : (
+            <SalesOverview token={token} onOpenRegister={openRegister} />
+          )
+        ) : tab === "registers" ? (
+          <div className="grid grid-cols-12 gap-5">
+            {/* Granted views index from Postgres core.catalogue */}
+            <aside className="col-span-12 lg:col-span-3">
+              <Sheet
+                title="Granted views"
+                description={`Connected as ${ROLE_LABEL[persona.dept]}`}
+                bodyClassName="px-3 pb-3"
+              >
+                <div className="flex flex-wrap gap-1 lg:flex-col">
+                  {catalogue.map((c) => {
+                    const selected = c.view_name === activeView;
+                    return (
+                      <button
+                        key={c.view_name}
+                        type="button"
+                        onClick={() => setSelectedView(c.view_name)}
+                        aria-current={selected ? "page" : undefined}
+                        className={
+                          "flex h-9 w-auto items-center rounded-lg px-3 text-left text-sm font-medium transition-colors duration-150 lg:w-full " +
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ink)] " +
+                          (selected
+                            ? "bg-[var(--ink)] text-[var(--card)]"
+                            : "text-[var(--ink-muted)] hover:bg-[var(--subtle)] hover:text-[var(--ink)]")
+                        }
+                      >
+                        <span className="truncate">{c.display_name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Sheet>
+            </aside>
+
+            {/* Active register table */}
+            <div className="col-span-12 min-w-0 lg:col-span-9">
+              <Sheet
+                title={activeEntry?.display_name ?? "Loading register…"}
+                description={
+                  activeEntry?.description ??
+                  "Read live from your granted Postgres reporting views"
+                }
+              >
+                {table.error && (
+                  <p className="mb-3 rounded-xl bg-[var(--blocked-soft)] px-4 py-3 text-sm text-[var(--blocked-ink)]">
+                    {table.error}
+                  </p>
+                )}
+                {table.data === null && !table.error ? (
+                  <TableSkeleton />
+                ) : (
+                  <DataTable
+                    key={activeView}
+                    rows={table.data ?? []}
+                    exportName={activeView || "export"}
+                    onNotify={notify}
+                    action={
+                      activeView === "vw_finance_revenue_assurance"
+                        ? {
+                            applies: (r) =>
+                              r.exception_type === "licence_not_invoiced",
+                            label: "Bill this now",
+                            busyLabel: "Billing…",
+                            doneLabel: "Invoiced ✓",
+                            run: async (r) => {
+                              const res = await billLicence(
+                                token,
+                                String(r.site_code),
+                                String(r.unit_code),
+                              );
+                              table.reload();
+                              return `Invoice ${res.invoice_no} raised for ${res.partner} — ${gbp(res.net_gbp)}/mo no longer leaking.`;
+                            },
+                          }
+                        : undefined
+                    }
+                  />
+                )}
+              </Sheet>
+            </div>
+          </div>
+        ) : (
+          <SystemPanel token={token} />
+        )}
+      </main>
+
+      {/* Non-shifting fixed notification toast */}
+      {toast && (
+        <div
+          role="status"
+          className={`fixed bottom-5 left-6 z-50 flex max-w-md items-start gap-3 rounded-xl px-4 py-3 text-sm shadow-lg ${
+            toast.isError
+              ? "bg-[var(--blocked-soft)] text-[var(--blocked-ink)]"
+              : "bg-[var(--ink)] text-[var(--card)]"
+          }`}
+        >
+          <span className="flex-1 leading-snug">{toast.text}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="shrink-0 text-xs font-medium opacity-75 hover:opacity-100"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
-      {/* Wraps rather than scrolls: no tab is ever hidden mid-demo, and every
-          tab already carries a border so wrapping can't shift on activation. */}
-      <nav className="mt-6 flex flex-wrap items-center gap-1 border-b border-neutral-200 dark:border-neutral-800 pb-2"
-        aria-label="Screens">
-        {screens.map((s) => (
-          <button key={s.view} onClick={() => setActive(s.view)}
-            aria-current={active === s.view ? "page" : undefined}
-            className={tabClass(active === s.view)}>
-            {s.title}
-          </button>
-        ))}
-        <span className="mx-1 h-4 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden />
-        <button onClick={() => setActive("agent")} className={tabClass(active === "agent")}>
-          Ask the data
-        </button>
-        <button onClick={() => setActive("system")} className={tabClass(active === "system")}>
-          How it works
-        </button>
-      </nav>
-
-      {/* Fixed floor so the page never collapses and re-expands between tabs */}
-      <div className="mt-5 min-h-[62vh]">
-        {active === "agent" ? (
-          <AgentPanel token={token} />
-        ) : active === "system" ? (
-          <SystemPanel token={token} />
-        ) : active === "overview" ? (
-          persona.dept === "FINANCE" ? <FinanceOverview token={token} />
-          : persona.dept === "OPS" ? <OpsOverview token={token} />
-          : <SalesOverview token={token} />
-        ) : screen ? (
-          <Section title={screen.title} note={screen.note}>
-            {table.error && <p className="text-sm text-red-700 dark:text-red-400">{table.error}</p>}
-            {table.data === null && !table.error ? (
-              <TableSkeleton />
-            ) : (
-              <DataTable rows={table.data ?? []} exportName={screen.view}
-                action={active === "vw_finance_revenue_assurance" ? {
-                  applies: (r) => r.exception_type === "licence_not_invoiced",
-                  label: "Bill this now",
-                  busyLabel: "Billing…",
-                  doneLabel: "Invoiced ✓",
-                  run: async (r) => {
-                    const res = await billLicence(token!, String(r.site_code),
-                                                  String(r.unit_code));
-                    table.reload();
-                    summary.reload();
-                    return `Invoice ${res.invoice_no} raised for ${res.partner} — ` +
-                           `${gbp(res.net_gbp)} a month no longer leaking.`;
-                  },
-                } : undefined} />
-            )}
-          </Section>
-        ) : (
-          <TableSkeleton />
-        )}
-      </div>
-    </main>
+      {/* Adjustable floating AI agent chatbox */}
+      <AgentDock
+        token={token}
+        dept={persona.dept}
+        roleLabel={ROLE_LABEL[persona.dept]}
+        open={agentOpen}
+        onOpenChange={setAgentOpen}
+      />
+    </div>
   );
 }

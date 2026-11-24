@@ -18,33 +18,52 @@ export function usePolled<T>(
   intervalMs = 15000,
 ) {
   const cached = CACHE.get(cacheKey);
+  const [stateKey, setStateKey] = useState(cacheKey);
   const [data, setData] = useState<T | null>((cached?.data as T) ?? null);
   const [error, setError] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(cached?.at ?? null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Synchronously read from cache if cacheKey changed before effect runs so
+  // previous-key rows never flash for even one frame.
+  const activeData = stateKey === cacheKey ? data : ((cached?.data as T) ?? null);
+  const activeUpdated = stateKey === cacheKey ? lastUpdated : (cached?.at ?? null);
+  const activeError = stateKey === cacheKey ? error : "";
+
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
+  const activeKeyRef = useRef(cacheKey);
+  activeKeyRef.current = cacheKey;
+
   const load = useCallback(async () => {
+    const targetKey = cacheKey;
     setIsRefreshing(true);
     try {
       const d = await fetcherRef.current();
       const at = new Date();
-      CACHE.set(cacheKey, { data: d, at });
-      setData(d);
-      setError("");
-      setLastUpdated(at);
+      CACHE.set(targetKey, { data: d, at });
+      if (activeKeyRef.current === targetKey) {
+        setStateKey(targetKey);
+        setData(d);
+        setError("");
+        setLastUpdated(at);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (activeKeyRef.current === targetKey) {
+        setStateKey(targetKey);
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
-      setIsRefreshing(false);
+      if (activeKeyRef.current === targetKey) {
+        setIsRefreshing(false);
+      }
     }
   }, [cacheKey]);
 
   useEffect(() => {
-    // Serve whatever we already have for this key, then revalidate.
     const hit = CACHE.get(cacheKey);
+    setStateKey(cacheKey);
     setData((hit?.data as T) ?? null);
     setLastUpdated(hit?.at ?? null);
     setError("");
@@ -55,7 +74,13 @@ export function usePolled<T>(
     return () => clearInterval(id);
   }, [cacheKey, load, intervalMs]);
 
-  return { data, error, lastUpdated, isRefreshing, reload: load };
+  return {
+    data: activeData,
+    error: activeError,
+    lastUpdated: activeUpdated,
+    isRefreshing,
+    reload: load,
+  };
 }
 
 /** Drop cached datasets — used when switching persona so one role's rows can
