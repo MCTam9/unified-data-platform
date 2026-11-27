@@ -40,7 +40,7 @@ services:
       MB_ANON_TRACKING_ENABLED: "false"
       JAVA_TOOL_OPTIONS: "-Xmx2g"
     ports:
-      - "3002:3000"          # 3000/3001 belong to the Next.js app
+      - "3010:3000"          # 3000-3002 belong to the torq-shop store fleet
     depends_on:
       db:
         condition: service_healthy

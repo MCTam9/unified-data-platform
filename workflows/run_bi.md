@@ -49,7 +49,7 @@ Needs ~2 GB for the Metabase JVM on top of Postgres. On colima:
 `colima start --cpu 4 --memory 6`.
 
 ```bash
-docker compose --profile bi up -d metabase   # port 3002 (3000/3001 are the app)
+docker compose --profile bi up -d metabase   # port 3010 (3000-3002 are taken locally)
 .venv/bin/python tools/bi/setup_metabase.py  # idempotent — safe to re-run
 .venv/bin/python -m pytest tests/test_metabase.py -q
 ```

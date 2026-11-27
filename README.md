@@ -91,7 +91,7 @@ audit log attributed to `simulator@demo.local`.
 ### Self-service BI (optional — Metabase)
 
 ```bash
-docker compose --profile bi up -d metabase   # port 3002
+docker compose --profile bi up -d metabase   # port 3010
 .venv/bin/python tools/bi/setup_metabase.py  # idempotent
 ```
 

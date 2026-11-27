@@ -32,7 +32,7 @@ import time
 import httpx
 import psycopg
 
-MB_URL = os.environ.get("METABASE_URL", "http://localhost:3002")
+MB_URL = os.environ.get("METABASE_URL", "http://localhost:3010")
 ADMIN_DSN = os.environ.get(
     "DATABASE_URL",
     "postgresql://platform_admin:platform_admin_dev@localhost:5433/platform",

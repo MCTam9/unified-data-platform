@@ -16,7 +16,7 @@ import os
 import httpx
 import pytest
 
-MB_URL = os.environ.get("METABASE_URL", "http://localhost:3002")
+MB_URL = os.environ.get("METABASE_URL", "http://localhost:3010")
 ADMIN = (os.environ.get("METABASE_ADMIN_EMAIL", "admin@bi.local"),
          os.environ.get("METABASE_ADMIN_PASSWORD", "MetabaseDemo123!"))
 USER_PASSWORD = os.environ.get("METABASE_USER_PASSWORD", "PlatformDemo123!")
